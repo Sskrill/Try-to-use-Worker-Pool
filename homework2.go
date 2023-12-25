@@ -5,6 +5,7 @@ import (
 	"log"
 	"math/rand"
 	"os"
+	"sync"
 	"time"
 )
 
@@ -35,47 +36,68 @@ func main() {
 
 	startTime := time.Now()
 
-	users := generateUsers(100)
+	const userCount, workerCount = 100, 15
 
-	for _, user := range users {
-		saveUserInfo(user)
-	}
+	users := make(chan User, userCount)
+
+	wg := &sync.WaitGroup{}
+
+	howMuchUsers(userCount, wg, users)
+
+	wg.Wait()
+	close(users)
+	howMuchWorkers(workerCount, users, wg)
+
+	wg.Wait()
 
 	fmt.Printf("DONE! Time Elapsed: %.2f seconds\n", time.Since(startTime).Seconds())
 }
+func howMuchUsers(userCount int, wg *sync.WaitGroup, users chan<- User) {
 
-func saveUserInfo(user User) {
-	fmt.Printf("WRITING FILE FOR UID %d\n", user.id)
-
-	filename := fmt.Sprintf("users/uid%d.txt", user.id)
-	file, err := os.OpenFile(filename, os.O_RDWR|os.O_CREATE, 0644)
-	if err != nil {
-		log.Fatal(err)
+	for i := 0; i < userCount; i++ {
+		wg.Add(1)
+		go generateUsers(i, users, wg)
 	}
+}
+func howMuchWorkers(workerCount int, users <-chan User, wg *sync.WaitGroup) {
 
-	file.WriteString(user.getActivityInfo())
-	time.Sleep(time.Second)
+	for i := 0; i < workerCount; i++ {
+		wg.Add(1)
+		go saveUserInfo(i, users, wg)
+	}
 }
 
-func generateUsers(count int) []User {
-	users := make([]User, count)
-
-	for i := 0; i < count; i++ {
-		users[i] = User{
-			id:    i + 1,
-			email: fmt.Sprintf("user%d@company.com", i+1),
-			logs:  generateLogs(rand.Intn(1000)),
+func saveUserInfo(workerID int, users <-chan User, wg *sync.WaitGroup) {
+	defer wg.Done()
+	for user := range users {
+		fmt.Printf("WRITING FILE FOR UID %d\n", user.id)
+		filename := fmt.Sprintf("logs/uid%d.txt", user.id)
+		file, err := os.OpenFile(filename, os.O_RDWR|os.O_CREATE, 0644)
+		if err != nil {
+			log.Fatal(err)
 		}
-		fmt.Printf("generated user %d\n", i+1)
-		time.Sleep(time.Millisecond * 100)
-	}
+		fmt.Printf("worker #%d finished\n", workerID)
 
-	return users
+		file.WriteString(user.getActivityInfo())
+		time.Sleep(time.Second)
+	}
+}
+
+func generateUsers(count int, users chan<- User, wg *sync.WaitGroup) {
+	defer wg.Done()
+
+	users <- User{
+		id:    count + 1,
+		email: fmt.Sprintf("user%d@company.com", count+1),
+		logs:  generateLogs(rand.Intn(1000)),
+	}
+	fmt.Printf("generated user %d\n", count+1)
+	time.Sleep(time.Millisecond * 100)
+
 }
 
 func generateLogs(count int) []logItem {
 	logs := make([]logItem, count)
-
 	for i := 0; i < count; i++ {
 		logs[i] = logItem{
 			action:    actions[rand.Intn(len(actions)-1)],
